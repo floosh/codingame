@@ -119,12 +119,29 @@ ostream& operator<< ( ostream& str, Map& m ) {
     return str;
 }
 
-struct Move {
+class Move {
+public:
     string action;
     int score;
+    int player;
     Move* parent;
     Map* map;
     vector<Move*> children;
+
+    Move(Move* parent, Map* map, int player) {
+        this->parent = parent;
+        this->map = map;
+        this->player = player;
+        if(parent != nullptr) {
+            parent->children.push_back(this);
+        }
+    }
+
+    ~Move() {
+        delete map;
+        children.clear();
+    }
+
 };
 
 bool compareByScore(Move* a, Move* b) {
@@ -147,6 +164,7 @@ public:
     }
 
     virtual void nextAction(stringstream &in, stringstream &out) {
+        m->getPlayers()->clear();
         in >> N >> P; //cin.ignore();
         for (int i = 0; i < N; i++) {
             int X0; // starting X coordinate of lightcycle (or -1)
@@ -201,25 +219,27 @@ public:
         //cerr << *m << endl;
     }
 
-    int fitness(Map* m, int playerId) {
-        voronoi(m);
-        return m->getPlayers()->at(playerId).score;
+    int fitness(Move* m) {
+        Map* map = new Map(m->map);
+        voronoi(map);
+        int score =  map->getPlayers()->at(m->player).score;
+        delete map;
+        return score;
     }
 
-    vector<Move*> play(Map* m, int playerId) {
-       vector<Move*> actions;
+    vector<Move*> play(Move* parent, int player) {
+        vector<Move*> actions;
+        vector<Coord> neighboors =  getNeighboors(parent->map->getPlayers()->at(player).c);
+        for (Coord c : neighboors) {
+            if(parent->map->get(c) != -1) continue;
 
-        for (Coord c : getNeighboors(m->getPlayers()->at(playerId).c)) {
-            if(m->get(c) != -1) continue;
+            Map* newMap = new Map(parent->map);
+            Move* move = new Move(parent, newMap, player);
 
-            Move* move = new Move;
-            Map* newMap = new Map(m);
+            newMap->getPlayers()->at(player).c = c;
+            newMap->set(c, player);
 
-            newMap->getPlayers()->at(playerId).c = c;
-
-            move->map = newMap;
-            move->action = getAction(m->getPlayers()->at(playerId).c, c);
-            move->score = fitness(newMap, playerId);
+            move->action = getAction(parent->map->getPlayers()->at(player).c, c);
             actions.push_back(move);
         }
         sort(actions.begin(), actions.end(), compareByScore);
@@ -247,36 +267,99 @@ public:
     void nextAction(stringstream &in, stringstream &out) {
         Agent::nextAction(in, out);
 
-        vector<Move*> plays = play(m, P);
-        for(Move* move : plays) {
-            //cerr << move->action << " " << move->score << endl;
+        vector<Move*> moves = play(new Move(nullptr,m,-1), P);
+        for(Move* move : moves) {
+            move->score = fitness(move);
         }
-        if(plays.size() == 0) {
+        if(moves.size() == 0) {
             out << "LEFT" << endl; // Yolo
         } else {
-            Move* move = plays[0];
-            out << move->action << endl; // A single line with UP, DOWN, LEFT or RIGHT
+            sort(moves.begin(), moves.end(), compareByScore);
+            out <<  moves[0]->action << endl;
         }
     }
 };
 
 class CleverAgent : public Agent {
 public:
-    DumbAgent():Agent() {}
+    CleverAgent():Agent() {}
 
+    // NegaMax Implementation with calculations at every level (poor final results and time-eating)
     void nextAction(stringstream &in, stringstream &out) {
         Agent::nextAction(in, out);
 
-       vector<Move*> plays = play(m, P);
-        for(Move* move : plays) {
-            //cerr << move->action << " " << move->score << endl;
+        Move* root = new Move(nullptr,new Map(m),-1);
+        vector<Move*> children = play(root, P);
+
+
+        for(int iteration = 0; iteration<2; iteration++) {
+            vector<Move*> newChildren;
+            for(Move* move : children) {
+
+                //Opponents
+                Move* newMove = move;
+                for(int i=(P+1)%N;i!=P;i=(i+1)%N) {
+                    vector<Move*> opponentMoves = play(newMove,i);
+                    if(opponentMoves.size()>0) {
+                        for(Move* opponentMove : opponentMoves) {
+                            opponentMove->score = fitness(opponentMove);
+                        }
+                        sort(opponentMoves.begin(), opponentMoves.end(), compareByScore());
+                        newMove = opponentMoves[0];
+                    }
+
+                }
+
+                //Me
+                vector<Move*> playerMoves = play(newMove,P);
+                for(Move* playerMove : playerMoves) {
+                    playerMove->score = fitness(playerMove);
+                }
+                newChildren.insert(newChildren.end(), playerMoves.begin(), playerMoves.end());
+            }
+            if(newChildren.size()>0) {
+                children = newChildren;
+            } else {
+                break;
+            }
         }
-        if(plays.size() == 0) {
-            out << "LEFT" << endl; // Yolo
+        if(children.size() > 0) {
+            sort(children.begin(), children.end(), compareByScore);
+            Move* bestEnding = children[0];
+            while(bestEnding->parent != nullptr && bestEnding->parent->player != -1) {
+                bestEnding = bestEnding->parent;
+            }
+            out << bestEnding->action << endl;
         } else {
-            Move* move = plays[0];
-            out << move->action << endl; // A single line with UP, DOWN, LEFT or RIGHT
+            out << "LEFT" << endl;
         }
+
+        delete root;
+    }
+};
+
+class CleverAgent2 : public Agent {
+public:
+    CleverAgent2():Agent() {}
+    // Little more clever negamax (alpha beta yolo)
+    void nextAction(stringstream &in, stringstream &out) {
+        Agent::nextAction(in, out);
+
+        Move* root = new Move(nullptr,new Map(m),-1);
+        vector<Move*> children;
+        children.push_back(root);
+
+        // build the tree
+        int player = P;
+
+            vector<Move*> newChildren;
+            for(Move* move : children) {
+                vector<Move*> playerMoves = play(move, player);
+                newChildren.concat(newChildren.end(), playerMoves.begin(), playerMoves.end());
+            }
+
+
+        delete root;
     }
 };
 
@@ -302,7 +385,7 @@ int main()
 
         for(int i=0;i<N;i++) {
             if(i==0) {
-                agents.insert(pair<int, Agent*>(i, new DumbAgent()));
+                agents.insert(pair<int, Agent*>(i, new CleverAgent2()));
             } else {
                 agents.insert(pair<int, Agent*>(i, new DumbAgent()));
             }
