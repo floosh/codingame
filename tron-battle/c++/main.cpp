@@ -122,8 +122,8 @@ ostream& operator<< ( ostream& str, Map& m ) {
 class Move {
 public:
     string action;
-    int score;
-    int player;
+    int score, player, alpha, beta;
+    bool visited;
     Move* parent;
     Map* map;
     vector<Move*> children;
@@ -135,6 +135,8 @@ public:
         if(parent != nullptr) {
             parent->children.push_back(this);
         }
+        this->alpha = -1000000;
+        this->beta = 1000000;
     }
 
     ~Move() {
@@ -142,9 +144,19 @@ public:
         children.clear();
     }
 
+    void print(string header) {
+        cerr << header << player << " " << action << " a " << alpha << " b " << beta << endl;
+        for(Move* m : children) {
+            m->print(header + "  ");
+        }
+    }
+
 };
 
 bool compareByScore(Move* a, Move* b) {
+    if(a->score == 0 && b->score == 0) {
+        return b->alpha < a->alpha;
+    }
     return b->score < a->score;
 }
 
@@ -304,7 +316,7 @@ public:
                         for(Move* opponentMove : opponentMoves) {
                             opponentMove->score = fitness(opponentMove);
                         }
-                        sort(opponentMoves.begin(), opponentMoves.end(), compareByScore());
+                        sort(opponentMoves.begin(), opponentMoves.end(), compareByScore);
                         newMove = opponentMoves[0];
                     }
 
@@ -350,17 +362,63 @@ public:
         children.push_back(root);
 
         // build the tree
-        int player = P;
-
+        int player = P-1, iterations = 0;
+        do {
+            player = (player+1)%N;
             vector<Move*> newChildren;
             for(Move* move : children) {
                 vector<Move*> playerMoves = play(move, player);
-                newChildren.concat(newChildren.end(), playerMoves.begin(), playerMoves.end());
+                newChildren.insert(newChildren.end(), playerMoves.begin(), playerMoves.end());
             }
+            children = newChildren;
+            if(player == P) {
+                iterations++;
+            }
+        } while(iterations < 2);
+
+        //AlphaBeta MinMax
+        if(root->children.size() > 0) {
+            alphaBeta(root);
+            root->print("");
+            sort(root->children.begin(), root->children.end(), compareByScore);
+            out << root->children[0]->action << endl;
+        } else {
+            out << "LEFT" << endl;
+        }
+
 
 
         delete root;
     }
+
+    int alphaBeta(Move* move) {
+        if(move->children.size() == 0) {
+            return fitness(move);
+        } else {
+            if(move->player == P) {
+                int v = -1000000;
+                for(Move* m : move->children) {
+                    v = max(v, alphaBeta(m));
+                    move->alpha = max(move->alpha, v);
+                    if(move->alpha >= move->beta) {
+                        break;  /* beta cut-off */
+                    }
+                }
+                return v;
+            } else {
+                int v = 1000000;
+                for(Move* m : move->children) {
+                    v = min(v, alphaBeta(m));
+                    move->beta = min(move->beta, v);
+                    if(move->beta <= move->alpha) {
+                        break;  /* alpha cut-off */
+                    }
+                }
+                return v;
+            }
+        }
+    }
+
 };
 
 int main()
@@ -433,7 +491,7 @@ int main()
                 } else {
                     m->set(heads.at(current), current);
                 }
-                //cout << *m << endl;
+                cout << *m << endl;
             }
             iterations++;
         }
